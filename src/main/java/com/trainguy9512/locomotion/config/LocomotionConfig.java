@@ -4,6 +4,7 @@ import com.google.common.collect.Maps;
 import com.google.gson.FieldNamingPolicy;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
 import com.trainguy9512.locomotion.LocomotionMain;
 import com.trainguy9512.locomotion.animation.animator.JointAnimator;
 import com.trainguy9512.locomotion.animation.animator.JointAnimatorDispatcher;
@@ -39,6 +40,7 @@ public class LocomotionConfig {
             .create();
 
     private Data configData;
+    private HeldItemModelSettings heldItemPreview;
 
     public LocomotionConfig() {
         this.configData = new Data();
@@ -48,24 +50,53 @@ public class LocomotionConfig {
         return configData;
     }
 
+    public HeldItemModelSettings heldItemModelsForRendering() {
+        return heldItemPreview != null ? heldItemPreview : configData.firstPersonPlayer.heldItemModels;
+    }
+
+    public boolean isHeldItemPreviewActive() {
+        return heldItemPreview != null;
+    }
+
+    public void beginHeldItemPreview(HeldItemModelSettings draft) {
+        heldItemPreview = draft;
+    }
+
+    public void endHeldItemPreview(HeldItemModelSettings draft) {
+        if (heldItemPreview == draft) heldItemPreview = null;
+    }
+
     public void load() {
+        this.configData = new Data();
         if (Files.exists(CONFIG_FILE_PATH)) {
             try (FileReader reader = new FileReader(CONFIG_FILE_PATH.toFile())) {
-                this.configData = GSON.fromJson(reader, LocomotionConfig.Data.class);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to load locomotion config file", e);
+                Data loaded = GSON.fromJson(reader, LocomotionConfig.Data.class);
+                if (loaded != null) {
+                    if (loaded.firstPersonPlayer == null) loaded.firstPersonPlayer = new Data.FirstPersonPlayer();
+                    if (loaded.firstPersonPlayer.heldItemModels == null) loaded.firstPersonPlayer.heldItemModels = new HeldItemModelSettings();
+                    loaded.firstPersonPlayer.heldItemModels.sanitize();
+                    if (loaded.blockEntities == null) loaded.blockEntities = new Data.BlockEntities();
+                    if (loaded.blockEntities.enabledBlockEntities == null) loaded.blockEntities.enabledBlockEntities = Maps.newHashMap();
+                    if (loaded.blockEntities.poseCalculationFrequency == null) loaded.blockEntities.poseCalculationFrequency = JointAnimator.PoseCalculationFrequency.CALCULATE_EVERY_FRAME;
+                    this.configData = loaded;
+                }
+            } catch (IOException | JsonParseException e) {
+                LOGGER.warn("Failed to load config {}; using defaults", CONFIG_FILE_PATH.toAbsolutePath(), e);
+                JointAnimatorDispatcher.getInstance().reInitializeData();
+                return;
             }
-        } else {
-            configData = new LocomotionConfig.Data();
         }
         save();
 
     }
 
     public void save() {
-        try (BufferedWriter writer = Files.newBufferedWriter(CONFIG_FILE_PATH)) {
-            writer.write(GSON.toJson(this.configData));
-//            LocomotionMain.LOGGER.info("Saved config to path {}", CONFIG_FILE_PATH);
+        this.configData.firstPersonPlayer.heldItemModels.sanitize();
+        try {
+            Files.createDirectories(CONFIG_FILE_PATH.toAbsolutePath().getParent());
+            try (BufferedWriter writer = Files.newBufferedWriter(CONFIG_FILE_PATH)) {
+                writer.write(GSON.toJson(this.configData));
+            }
         } catch (Exception e) {
             LOGGER.error("Failed to write config to path {}", CONFIG_FILE_PATH.toAbsolutePath());
         }
@@ -75,10 +106,12 @@ public class LocomotionConfig {
 
     public static class Data {
 
-        public final FirstPersonPlayer firstPersonPlayer = new FirstPersonPlayer();
-        public final BlockEntities blockEntities = new BlockEntities();
+        public FirstPersonPlayer firstPersonPlayer = new FirstPersonPlayer();
+        public BlockEntities blockEntities = new BlockEntities();
 
         public static class FirstPersonPlayer {
+
+            public HeldItemModelSettings heldItemModels = new HeldItemModelSettings();
 
             public boolean enableRenderer = true;
 
@@ -110,17 +143,6 @@ public class LocomotionConfig {
     }
 
     public Function<Screen, Screen> getConfigScreen(Predicate<String> ifModLoaded) {
-
-        if (ifModLoaded.test("yet_another_config_lib_v3")) {
-            return LocomotionConfigScreen::createConfigScreen;
-        } else {
-            return parent -> new AlertScreen(
-                    () -> Minecraft.getInstance().setScreen(parent),
-                    Component.translatable("locomotion.config.yacl_not_found.header"),
-                    Component.translatable("locomotion.config.yacl_not_found.description"),
-                    Component.translatable("locomotion.config.yacl_not_found.close"),
-                    true
-            );
-        }
+        return LocomotionConfigScreen::createConfigScreen;
     }
 }
